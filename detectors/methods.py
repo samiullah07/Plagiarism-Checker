@@ -64,9 +64,9 @@ def run_string_matching(text, source_texts=None):
         score = (base + density) / 2
     else:
         score = max_similarity * 100
-
+    
+    print("String Matching Score:", score, "| Input:", text)
     return int(score)
-
 
 # === 2️⃣ Citation Analysis ===
 
@@ -108,27 +108,68 @@ def check_reference_matches(citations, refs):
 
 
 def run_citation_analysis(text):
-    patterns = [
+    """Improved citation analysis without class dependencies"""
+    
+    citation_patterns = [
         r"\([A-Z][a-z]+ et al\.?, \d{4}\)",
-        r"\([A-Z][a-z]+ and [A-Z][a-z]+, \d{4}\)",
+        r"\([A-Z][a-z]+ and [A-Z][a-z]+, \d{4}\)", 
         r"\[[\d,\s]+\]",
-        r"[A-Z][a-z]+ \(\d{4}\)",
-        r"\b\d{4}[a-z]?\b"
+        r"[A-Z][a-z]+ \(\d{4}\)"
     ]
-    citations = [c for p in patterns for c in re.findall(p, text)]
-    refs = extract_reference_section(text)
+    
+    citation_count = 0
+    for pattern in citation_patterns:
+        citations = re.findall(pattern, text)
+        citation_count += len(citations)
+    
+    word_count = len(text.split())
+    
+    # More nuanced scoring
+    if citation_count == 0:
+        # Check if this is academic/scientific content that SHOULD have citations
+        academic_indicators = detect_academic_content(text)
+        if academic_indicators:
+            return 70  # Moderate suspicion for academic content without citations
+        else:
+            return 30  # Low suspicion for non-academic content
+    
+    # Calculate citation density
+    citation_density = (citation_count / word_count) * 1000
+    
+    # Good citation density gets lower plagiarism score
+    if citation_density > 5:  # Well-cited
+        return 20
+    elif citation_density > 2:  # Moderately cited
+        return 40
+    else:  # Poorly cited
+        return 60
 
-    density = len(citations) / max(len(text.split()), 1) * 1000
-    consistency = check_citation_consistency(citations)
-    ref_match = check_reference_matches(citations, refs)
-
-    if not citations:
-        return 80
-
-    score = (min(density * 2, 100) + consistency + ref_match) / 3
-    return int(score)
-
-
+def detect_academic_content(text):
+    """Detect if text contains academic/scientific content that needs citations"""
+    academic_keywords = [
+        'research', 'study', 'findings', 'results', 'data', 'analysis',
+        'according to', 'previous work', 'literature', 'scholars',
+        'experiment', 'hypothesis', 'methodology', 'conclusion'
+    ]
+    
+    scientific_terms = [
+        'significant', 'correlation', 'probability', 'statistical',
+        'theory', 'model', 'framework', 'paradigm'
+    ]
+    
+    text_lower = text.lower()
+    
+    academic_score = 0
+    for keyword in academic_keywords:
+        if keyword in text_lower:
+            academic_score += 1
+    
+    for term in scientific_terms:
+        if term in text_lower:
+            academic_score += 1
+    
+    
+    return academic_score >= 2  # At least 2 academic indicators
 # === 3️⃣ Stylometry Analysis ===
 
 def calculate_sentence_variation(sentences):

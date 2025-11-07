@@ -36,3 +36,10 @@ def analyze_pdf(content, methods=None, sensitivity=80):
     scores = [v for v in result['method_breakdown'].values()]
     result['overall_plagiarism_score'] = sum(scores) // len(scores)
     return result
+
+# print(run_string_matching("As shown in Figure 1, previous research (Anderson et al. 2002)..."))
+# print(run_citation_analysis("As shown in Figure 1, previous research (Anderson et al. 2002)..."))
+# print(run_semantic_analysis("As shown in Figure 1, previous research (Anderson et al. 2002)..."))
+# print(run_cross_lingual("As shown in Figure 1, previous research (Anderson et al. 2002)..."))
+# print(run_metadata_analysis("As shown in Figure 1, previous research (Anderson et al. 2002)..."))
+

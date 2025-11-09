@@ -13,6 +13,7 @@ dependencies = [
     "langgraph>=1.0.2",
     "pymupdf>=1.26.6",
     "python-dotenv>=1.2.1",
+    "requests>=2.32.5",
     "simhash>=2.1.2",
     "streamlit>=1.51.0",
 ]

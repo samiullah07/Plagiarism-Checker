@@ -20,6 +20,7 @@ class TextRequest(BaseModel):
     text: str
     methods: Optional[List[str]] = None
     sensitivity: Optional[int] = 80
+    serpapi_key: Optional[str] = None   # NEW FIELD
 
 @app.get("/")
 def root():
@@ -30,8 +31,9 @@ def analyze_text(request: TextRequest):
     try:
         if not request.text.strip():
             raise HTTPException(status_code=400, detail="Text cannot be empty")
-            
-        result = analyze_document(request.text, request.methods, request.sensitivity)
+        
+        # Pass serpapi_key through to core analysis
+        result = analyze_document(request.text, request.methods, request.sensitivity, serpapi_key=request.serpapi_key)
         analysis_id = str(uuid4())
         return {"id": analysis_id, "result": result}
     except Exception as e:
@@ -40,19 +42,24 @@ def analyze_text(request: TextRequest):
 import traceback
 
 @app.post('/analyze/pdf')
-async def analyze_pdf_endpoint(file: UploadFile = File(...), methods: Optional[List[str]] = None, sensitivity: Optional[int] = 80):
+async def analyze_pdf_endpoint(
+    file: UploadFile = File(...),
+    methods: Optional[List[str]] = None, 
+    sensitivity: Optional[int] = 80,
+    serpapi_key: Optional[str] = None    # NEW FIELD
+):
     try:
         if file.content_type != "application/pdf":
             raise HTTPException(status_code=400, detail="Only PDF files are supported")
         content = await file.read()
         if len(content) == 0:
             raise HTTPException(status_code=400, detail="Uploaded file is empty")
-        result = analyze_pdf(content, methods, sensitivity)
+        result = analyze_pdf(content, methods, sensitivity, serpapi_key=serpapi_key)
         analysis_id = str(uuid4())
         return {"id": analysis_id, "result": result}
     except Exception as e:
         print("PDF analysis error:", e)
-        traceback.print_exc()  # Print full error stack to console
+        traceback.print_exc()
         raise HTTPException(status_code=500, detail=f"PDF analysis error: {str(e)}")
 
 @app.get('/results/{id}')

@@ -4,9 +4,55 @@ from difflib import SequenceMatcher
 from collections import Counter
 from sentence_transformers import SentenceTransformer, util
 import fitz  # PyMuPDF
-
+import os
 # Initialize global semantic model once (avoid reloading per call)
 semantic_model = SentenceTransformer('all-mpnet-base-v2')
+
+import requests
+
+def serpapi_google_search(query, serpapi_key, num_results=5):
+    url = "https://serpapi.com/search"
+    params = {
+        "q": query,
+        "api_key": serpapi_key,
+        "engine": "google",
+        "num": num_results
+    }
+    response = requests.get(url, params=params)
+    if response.status_code == 200:
+        data = response.json()
+        return data.get("organic_results", [])
+    return []
+
+def run_google_snippet_matching(text, serpapi_key, sensitivity=80, top_n=3):
+    query = text[:120] if len(text) > 120 else text
+    results = serpapi_google_search(query, serpapi_key, num_results=7)
+    threshold = sensitivity / 100
+    
+    match_scores = []
+    snippet_details = []
+    for res in results:
+        snippet = res.get("snippet", "")
+        title = res.get("title", "")
+        link = res.get("link", "")
+        string_sim = SequenceMatcher(None, text, snippet).ratio()
+        match_scores.append(string_sim)
+        snippet_details.append({
+            "score": round(string_sim*100, 2),
+            "snippet": snippet,
+            "title": title,
+            "link": link
+        })
+    
+    # Sort all results, pick top N for the report
+    top_snippets = sorted(snippet_details, key=lambda x: x["score"], reverse=True)[:top_n]
+    # Use best score (for overall score if desired)
+    best = top_snippets[0] if top_snippets else {"score": 0, "snippet": None, "title": None, "link": None}
+
+    return {
+        "score": int(best["score"]),
+        "top_snippets": top_snippets  # List of dicts of score, snippet, title, link
+    }
 
 # === Helper Utilities ===
 
@@ -35,7 +81,9 @@ def partial_ratio(str1, str2):
 
 # === 1️⃣ String Matching and Fingerprinting ===
 
-def run_string_matching(text, source_texts=None):
+def run_string_matching(text, source_texts=None, sensitivity=80):
+    # Sensitivity: 60-100 converts to 0.6-1.0 threshold
+    threshold = sensitivity / 100
     if source_texts is None:
         source_texts = [
             "in this paper we present", "as shown in figure", "previous research has shown",
@@ -54,7 +102,8 @@ def run_string_matching(text, source_texts=None):
         pr = partial_ratio(text, src)
         sim = max(ratio, pr)
 
-        if sim > 0.8:
+        # Use sensitivity threshold here!
+        if sim > threshold:
             matches_found += 1
         max_similarity = max(max_similarity, sim)
 
@@ -64,8 +113,6 @@ def run_string_matching(text, source_texts=None):
         score = (base + density) / 2
     else:
         score = max_similarity * 100
-    
-    print("String Matching Score:", score, "| Input:", text)
     return int(score)
 
 # === 2️⃣ Citation Analysis ===
@@ -107,41 +154,38 @@ def check_reference_matches(citations, refs):
     return (author_matches / len(citations)) * 100
 
 
-def run_citation_analysis(text):
-    """Improved citation analysis without class dependencies"""
-    
+def run_citation_analysis(text, sensitivity=80):
     citation_patterns = [
         r"\([A-Z][a-z]+ et al\.?, \d{4}\)",
         r"\([A-Z][a-z]+ and [A-Z][a-z]+, \d{4}\)", 
         r"\[[\d,\s]+\]",
         r"[A-Z][a-z]+ \(\d{4}\)"
     ]
-    
     citation_count = 0
     for pattern in citation_patterns:
         citations = re.findall(pattern, text)
         citation_count += len(citations)
-    
+
     word_count = len(text.split())
-    
-    # More nuanced scoring
+
     if citation_count == 0:
-        # Check if this is academic/scientific content that SHOULD have citations
         academic_indicators = detect_academic_content(text)
         if academic_indicators:
-            return 70  # Moderate suspicion for academic content without citations
+            return 70
         else:
-            return 30  # Low suspicion for non-academic content
-    
-    # Calculate citation density
+            return 30
+
     citation_density = (citation_count / word_count) * 1000
-    
-    # Good citation density gets lower plagiarism score
-    if citation_density > 5:  # Well-cited
+
+    # Adjust thresholds using sensitivity:
+    threshold_high = 5 * (sensitivity / 80)
+    threshold_mid = 2 * (sensitivity / 80)
+
+    if citation_density > threshold_high:  # Well-cited
         return 20
-    elif citation_density > 2:  # Moderately cited
+    elif citation_density > threshold_mid:  # Moderately cited
         return 40
-    else:  # Poorly cited
+    else:
         return 60
 
 def detect_academic_content(text):
@@ -229,7 +273,7 @@ def analyze_punctuation(text):
     return 85 if 1 <= count <= 3 else 70 if 0.5 <= count <= 4 else 40
 
 
-def run_stylometry(text):
+def run_stylometry(text, sensitivity=80):
     sentences = [s.strip() for s in re.split(r'[.!?]+', text) if len(s.strip()) > 10]
     if len(sentences) < 3:
         return 50
@@ -240,15 +284,21 @@ def run_stylometry(text):
         check_passive_voice(text),
         analyze_punctuation(text)
     ]
-    return int(100 - (sum(metrics)/len(metrics)))
-
+    # Use sensitivity to tighten leniency for sentence variation
+    strictness = sensitivity / 100
+    var_score = calculate_sentence_variation(sentences)
+    if var_score < (90 * strictness):
+        return 20  # More strict
+    return int(100 - (sum(metrics) / len(metrics)))
 
 # === 4️⃣ Semantic Analysis ===
-
-def run_semantic_analysis(text, comparison_texts=None):
+def run_semantic_analysis(text, comparison_texts=None, sensitivity=80):
+    # You can override comparison_texts with Wikipedia API or search corpus elsewhere if needed!
     if comparison_texts is None:
         comparison_texts = [
-            "in this paper we present", "based on our analysis", "previous research has shown"
+            "in this paper we present", 
+            "based on our analysis", 
+            "previous research has shown"
         ]
     text_emb = semantic_model.encode([text], convert_to_tensor=True)
     sims = [
@@ -256,8 +306,17 @@ def run_semantic_analysis(text, comparison_texts=None):
         for c in comparison_texts
     ]
     avg = np.mean(sorted(sims, reverse=True)[:3]) if sims else 0
-    return int(avg * 100)
 
+    # Sensitivity makes the tool more/less likely to trigger plagiarism
+    # Sensitivity 100: threshold 0.3, Sensitivity 60: threshold 0.5
+    threshold = 0.5 - 0.2 * ((sensitivity - 60) / 40.0)
+    if avg >= threshold:
+        # If above threshold, report a high score
+        return int(avg * 100)
+    else:
+        # Below threshold, penalize less if sensitivity is low
+        penalty = int(avg * 100 * (sensitivity / 100))
+        return penalty
 
 # === 5️⃣ Cross-Lingual Plagiarism ===
 
@@ -284,19 +343,22 @@ def check_idiom_usage(text):
     return 50 if not total else (correct / total) * 100
 
 
-def run_cross_lingual(text):
+def run_cross_lingual(text, sensitivity=80):
     non_ascii_ratio = sum(1 for c in text if ord(c) > 127) / len(text) if text else 0
-    scores = [
-        min(non_ascii_ratio * 200, 100),
-        detect_translation_patterns(text),
-        check_idiom_usage(text)
-    ]
-    return int(sum(scores) / len(scores))
+    tl_score = detect_translation_patterns(text)
+    idiom_score = check_idiom_usage(text)
+    # Sensitivity modulates the importance of these features
+    weight = sensitivity / 100
+    non_ascii_part = min(non_ascii_ratio * 200 * weight, 100)
+    tl_part = min(tl_score * weight, 100)
+    idiom_part = idiom_score * weight
+    total = (non_ascii_part + tl_part + idiom_part) / 3
+    return int(total)
 
 
 # === 6️⃣ Metadata and PDF Forensics ===
 
-def run_metadata_analysis(pdf_bytes):
+def run_metadata_analysis(pdf_bytes, sensitivity=80):
     try:
         doc = fitz.open(stream=pdf_bytes, filetype="pdf")
         meta = doc.metadata
@@ -307,10 +369,13 @@ def run_metadata_analysis(pdf_bytes):
             check_content_flow(doc)
         ]
         doc.close()
-        return int(sum(checks)/len(checks))
+        # Optionally modulate result by sensitivity
+        base_score = int(sum(checks) / len(checks))
+        # For example, increase the base_score penalty if sensitivity is high (stricter)
+        return int(base_score * (sensitivity / 100))
     except Exception as e:
         print(f"Metadata analysis error: {e}")
-        return 50
+        return 50  # default score
 
 
 def check_dates(meta):

@@ -2,3 +2,5 @@
 env
 venv
 .venv
+pyproject.toml
+uv.lock
